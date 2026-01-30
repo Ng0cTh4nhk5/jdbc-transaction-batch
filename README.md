@@ -177,20 +177,83 @@ CREATE TABLE order_items (
 
 ```mermaid
 flowchart TD
-    A[Bắt đầu đặt hàng] --> B[Tắt AutoCommit]
-    B --> C[Tạo Order mới]
-    C --> D[Kiểm tra tồn kho từng item]
-    D --> E{Đủ hàng?}
-    E -->|Không| F[Rollback]
-    F --> G[Throw Exception]
-    E -->|Có| H[Trừ kho từng item]
-    H --> I[Insert Order Items bằng Batch]
-    I --> J{Thành công?}
-    J -->|Không| F
-    J -->|Có| K[Commit]
-    K --> L[Bật AutoCommit]
-    L --> M[Kết thúc thành công]
+    Start([🚀 START: createOrder]) --> Init[📋 Khởi tạo Connection & PreparedStatements]
+    Init --> TryBlock{{"⚡ TRY BLOCK"}}
+    
+    TryBlock --> Step1[🔓 1. Lấy Connection từ DatabaseConfig]
+    Step1 --> Step2[🚫 2. setAutoCommit FALSE<br/>📌 Bắt đầu Transaction]
+    Step2 --> Step3[➕ 3. INSERT INTO orders<br/>💾 RETURNING id]
+    Step3 --> Step4[📦 4. Chuẩn bị kiểm tra tồn kho<br/>SQL: SELECT FROM products WHERE id = ?]
+    
+    Step4 --> LoopCheck{{"🔄 FOR EACH<br/>OrderItem"}}
+    LoopCheck --> CheckStock[🔍 Query: Lấy stock hiện tại]
+    CheckStock --> ProductExists{Sản phẩm<br/>tồn tại?}
+    
+    ProductExists -->|❌ Không| ThrowNotFound["⚠️ throw Exception<br/>'Không tìm thấy Product'"]
+    ThrowNotFound --> CatchBlock
+    
+    ProductExists -->|✅ Có| CompareStock{stock >= qty?}
+    CompareStock -->|❌ Không đủ| ThrowInsufficient["⚠️ throw Exception<br/>'KHÔNG ĐỦ HÀNG!'"]
+    ThrowInsufficient --> CatchBlock
+    
+    CompareStock -->|✅ Đủ| NextItem{Còn item<br/>tiếp theo?}
+    NextItem -->|Có| LoopCheck
+    NextItem -->|Hết| AllChecked[✓ Tất cả items đều đủ hàng]
+    
+    AllChecked --> LoopUpdate{{"🔄 FOR EACH<br/>OrderItem"}}
+    LoopUpdate --> UpdateStock[📉 UPDATE products<br/>SET stock = stock - qty<br/>WHERE id = ?]
+    UpdateStock --> NextUpdate{Còn item<br/>tiếp theo?}
+    NextUpdate -->|Có| LoopUpdate
+    NextUpdate -->|Hết| AllUpdated[✓ Đã trừ kho xong]
+    
+    AllUpdated --> BatchPrep[📝 Chuẩn bị Batch Insert<br/>SQL: INSERT INTO order_items]
+    BatchPrep --> LoopBatch{{"🔄 FOR EACH<br/>OrderItem"}}
+    LoopBatch --> AddToBatch[⬆️ pstmt.setInt 1,2,3<br/>⬆️ pstmt.addBatch]
+    AddToBatch --> NextBatch{Còn item<br/>tiếp theo?}
+    NextBatch -->|Có| LoopBatch
+    NextBatch -->|Hết| ExecuteBatch[🚀 executeBatch<br/>Insert tất cả items cùng lúc]
+    
+    ExecuteBatch --> Commit[✅ conn.commit<br/>💾 Lưu vĩnh viễn tất cả thay đổi]
+    Commit --> ReturnSuccess[🎉 Return orderId]
+    ReturnSuccess --> FinallyBlock
+    
+    TryBlock -.->|Exception| CatchBlock{{"⚠️ CATCH BLOCK"}}
+    CatchBlock --> RollbackCheck{conn != null?}
+    RollbackCheck -->|Có| Rollback[🔙 conn.rollback<br/>⚠️ Hoàn tác TẤT CẢ thay đổi]
+    RollbackCheck -->|Không| ReThrow
+    Rollback --> ReThrow[⛔ Re-throw Exception]
+    ReThrow --> FinallyBlock
+    
+    FinallyBlock{{"🧹 FINALLY BLOCK"}}
+    FinallyBlock --> CloseResources[🔒 Đóng ResultSet, PreparedStatements]
+    CloseResources --> RestoreAutoCommit[🔓 setAutoCommit TRUE<br/>Bật lại chế độ mặc định]
+    RestoreAutoCommit --> CloseConn[🔌 conn.close]
+    CloseConn --> End([🏁 END])
+    
+    style Start fill:#e1f5e1
+    style End fill:#ffe1e1
+    style Commit fill:#b3ffb3,stroke:#00aa00,stroke-width:3px
+    style Rollback fill:#ffb3b3,stroke:#ff0000,stroke-width:3px
+    style ExecuteBatch fill:#b3d9ff,stroke:#0066cc,stroke-width:2px
+    style TryBlock fill:#fff9e6,stroke:#ffcc00,stroke-width:2px
+    style CatchBlock fill:#ffe6e6,stroke:#ff6666,stroke-width:2px
+    style FinallyBlock fill:#e6f3ff,stroke:#6699ff,stroke-width:2px
+    style ThrowNotFound fill:#ffcccc
+    style ThrowInsufficient fill:#ffcccc
 ```
+
+#### 📌 Giải thích các bước quan trọng:
+
+| Bước | Mô tả | Mục đích |
+|------|-------|----------|
+| **1-2** | Lấy Connection và tắt AutoCommit | Bắt đầu transaction thủ công |
+| **3** | Insert Order và lấy ID | Tạo đơn hàng mới |
+| **4-5** | Loop kiểm tra tồn kho | Validate TẤT CẢ items trước khi thực hiện thay đổi (Atomicity) |
+| **6** | Loop trừ kho | Update stock cho từng sản phẩm |
+| **7-8** | Batch Insert | Insert tất cả order_items trong 1 lần (Performance) |
+| **9** | Commit | Xác nhận và lưu vĩnh viễn tất cả thay đổi |
+| **Catch** | Rollback | Hoàn tác nếu có bất kỳ lỗi nào |
+| **Finally** | Cleanup | Đóng resources và khôi phục AutoCommit |
 
 ### Project Structure
 

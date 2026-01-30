@@ -14,7 +14,7 @@ public class DatabaseConfig {
     // Database connection parameters
     private static final String URL = "jdbc:postgresql://localhost:5432/order_system";
     private static final String USER = "postgres";
-    private static final String PASSWORD = "postgres";
+    private static final String PASSWORD = "whYlonElY0!";
     
     // Singleton instance
     private static DatabaseConfig instance;
