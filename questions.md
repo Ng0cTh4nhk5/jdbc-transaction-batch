@@ -8,3 +8,6 @@ câu 2:
 1. Món A trừ kho thành công.
 2. Món B trừ kho thất bại (do hết hàng).
 3. Lúc này, Transaction của nhóm sẽ xử lý sao? Nó có tự động rollback món A không hay nhóm phải code tay đoạn connection.rollback()? Nhóm có thể demo ngay trường hợp này không?
+
+câu 3: 
+Nhóm đang kiểm tra tồn kho bằng Java (if stock < qty) hay bằng Database Constraint (Check constraint hoặc Trigger)? Tại sao lại chọn cách đó?
